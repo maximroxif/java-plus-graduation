@@ -16,7 +16,6 @@ import java.util.List;
 
 @Slf4j
 @Service
-@Primary
 public class StatClientImpl implements StatClient {
 
     private static final String STATS_PATH = "/stats";
