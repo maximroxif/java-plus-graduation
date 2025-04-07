@@ -21,6 +21,7 @@ import ru.practicum.ewm.user.model.User;
 import ru.practicum.ewm.user.repository.UserRepository;
 
 import java.util.List;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -61,7 +62,7 @@ public class RequestServiceImpl implements RequestService {
     public List<ParticipationRequestDto> getAllOwnRequests(long userId) {
         log.info("Fetching all requests for userId={}", userId);
 
-        User user = userRepository.findById(userId)
+        userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("User with id=" + userId + " not found"));
         List<Request> requests = requestRepository.getAllByRequesterId(userId);
 
@@ -113,31 +114,68 @@ public class RequestServiceImpl implements RequestService {
     @Override
     @Transactional
     public EventRequestStatusUpdateResult updateStatus(PrivateUpdateRequestParams params) {
-        log.info("Updating request statuses for eventId={} by userId={}", params.eventId(), params.userId());
-
         User user = userRepository.findById(params.userId())
-                .orElseThrow(() -> new NotFoundException("User with id=" + params.userId() + " not found"));
+                .orElseThrow(() -> new NotFoundException("User with id " + params.userId() + " not found"));
         Event event = eventRepository.findById(params.eventId())
-                .orElseThrow(() -> new NotFoundException("Event with id=" + params.eventId() + " not found"));
+                .orElseThrow(() -> new NotFoundException("Event with id " + params.eventId() + " not found"));
 
-        validateEventOwnership(user, event);
+        if (!Objects.equals(event.getInitiator().getId(), user.getId())) {
+            throw new AccessException("User with id " + params.userId() + " is not own event");
+        }
 
-        List<Long> requestIds = params.eventRequestStatusUpdateRequest().requestIds();
-        RequestStatus newStatus = params.eventRequestStatusUpdateRequest().status();
-        List<Request> requests = requestRepository.findAllByIdInAndEventId(requestIds, params.eventId());
+        List<Request> requestListOfEvent =
+                requestRepository.findAllByIdInAndEventId(
+                        params.eventRequestStatusUpdateRequest().requestIds(), params.eventId());
 
-        validateRequestsForUpdate(requests, event);
+        long confirmedRequestsCount =
+                requestRepository.countByStatusAndEventId(RequestStatus.CONFIRMED, params.eventId());
 
-        long confirmedCount = requestRepository.countByStatusAndEventId(RequestStatus.CONFIRMED, event.getId());
-        log.debug("Current confirmed requests: {}", confirmedCount);
 
-        updateRequestsStatus(requests, newStatus, event, confirmedCount);
+        for (Request request : requestListOfEvent) {
+            if (request.getStatus() != RequestStatus.PENDING) {
+                throw new ConflictException("Request status is not PENDING");
+            }
 
-        List<ParticipationRequestDto> confirmedRequests = fetchConfirmedRequests(event);
-        List<ParticipationRequestDto> rejectedRequests = fetchRejectedRequests(event);
+            if (confirmedRequestsCount >= event.getParticipantLimit()) {
+                throw new ConflictException("Participant limit exceeded");
+            }
 
-        log.info("Status update completed: {} confirmed, {} rejected", confirmedRequests.size(), rejectedRequests.size());
-        return new EventRequestStatusUpdateResult(confirmedRequests, rejectedRequests);
+            if (event.isRequestModeration()) {
+                String status = params.eventRequestStatusUpdateRequest().status().toString();
+                log.debug("State for update: {}", status);
+                requestRepository.updateStatus(
+                        status, request.getId());
+                Request modifiedRequest = requestRepository.findById(request.getId())
+                        .orElseThrow(() -> new NotFoundException("Request with id " + request.getId() + " not found"));
+                log.debug("Updated {} {}", modifiedRequest.getId(), modifiedRequest.getStatus());
+                if (params.eventRequestStatusUpdateRequest().status() == RequestStatus.CONFIRMED) {
+                    confirmedRequestsCount++;
+                }
+                if (confirmedRequestsCount >= event.getParticipantLimit()) {
+                    requestRepository.cancelNewRequestsStatus(event.getId());
+                }
+            }
+        }
+
+        List<ParticipationRequestDto> confirmedRequestsDtoList =
+                requestRepository.findAllByStatus(RequestStatus.CONFIRMED)
+                        .stream()
+                        .filter(request -> request.getEvent().getId() == event.getId())
+                        .map(requestMapper::toParticipationRequestDto)
+                        .toList();
+        List<Request> rejectedRequests = requestRepository.findAllByStatus(RequestStatus.REJECTED);
+        for (Request request : rejectedRequests) {
+            log.debug("{} id, status: {}", request.getId(), request.getStatus());
+        }
+
+        List<ParticipationRequestDto> rejectedRequestsDtoList =
+                rejectedRequests
+                        .stream()
+                        .filter(request -> request.getEvent().getId() == event.getId())
+                        .map(requestMapper::toParticipationRequestDto)
+                        .toList();
+
+        return new EventRequestStatusUpdateResult(confirmedRequestsDtoList, rejectedRequestsDtoList);
     }
 
     private void validateCreateRequest(User user, Event event) {
@@ -170,15 +208,6 @@ public class RequestServiceImpl implements RequestService {
         }
     }
 
-    private void validateRequestsForUpdate(List<Request> requests, Event event) {
-        for (Request request : requests) {
-            if (!request.getStatus().equals(RequestStatus.PENDING)) {
-                log.error("Request id={} has status {} instead of PENDING", request.getId(), request.getStatus());
-                throw new ConflictException("All requests must be in PENDING status");
-            }
-        }
-    }
-
     private void setInitialStatus(Request request, Event event) {
         if (!event.isRequestModeration() || event.getParticipantLimit() == 0) {
             request.setStatus(RequestStatus.CONFIRMED);
@@ -187,34 +216,5 @@ public class RequestServiceImpl implements RequestService {
             request.setStatus(RequestStatus.PENDING);
             log.debug("Request set to PENDING");
         }
-    }
-
-    private void updateRequestsStatus(List<Request> requests, RequestStatus newStatus, Event event, long confirmedCount) {
-        for (Request request : requests) {
-            if (newStatus == RequestStatus.CONFIRMED && confirmedCount >= event.getParticipantLimit()) {
-                log.warn("Participant limit reached, rejecting remaining requests");
-                requestRepository.cancelNewRequestsStatus(event.getId());
-                break;
-            }
-            requestRepository.updateStatus(newStatus.toString(), request.getId());
-            log.debug("Updated request id={} to status={}", request.getId(), newStatus);
-            if (newStatus == RequestStatus.CONFIRMED) {
-                confirmedCount++;
-            }
-        }
-    }
-
-    private List<ParticipationRequestDto> fetchConfirmedRequests(Event event) {
-        return requestRepository.findAllByStatus(RequestStatus.CONFIRMED).stream()
-                .filter(request -> request.getEvent().getId() == (event.getId()))
-                .map(requestMapper::toParticipationRequestDto)
-                .toList();
-    }
-
-    private List<ParticipationRequestDto> fetchRejectedRequests(Event event) {
-        return requestRepository.findAllByStatus(RequestStatus.REJECTED).stream()
-                .filter(request -> request.getEvent().getId() == (event.getId()))
-                .map(requestMapper::toParticipationRequestDto)
-                .toList();
     }
 }
