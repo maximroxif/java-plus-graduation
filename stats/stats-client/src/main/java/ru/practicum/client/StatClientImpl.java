@@ -2,7 +2,6 @@ package ru.practicum.client;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Primary;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -59,7 +58,8 @@ public class StatClientImpl implements StatClient {
                             .queryParam("unique", unique)
                             .build())
                     .retrieve()
-                    .body(new ParameterizedTypeReference<>() {});
+                    .body(new ParameterizedTypeReference<>() {
+                    });
             log.debug("Retrieved stats: start={}, end={}, uris={}, unique={}", start, end, uris, unique);
             return stats;
         } catch (Exception e) {
