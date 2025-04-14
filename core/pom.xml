@@ -11,7 +11,12 @@
 
     <artifactId>core</artifactId>
     <modules>
-        <module>main-service</module>
+        <module>event-service</module>
+        <module>location-service</module>
+        <module>interaction-api</module>
+        <module>user-service</module>
+        <module>like-service</module>
+        <module>request-service</module>
     </modules>
 
     <packaging>pom</packaging>
@@ -21,5 +26,30 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <dependencies>
+
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+    </dependencies>
+
 
 </project>
