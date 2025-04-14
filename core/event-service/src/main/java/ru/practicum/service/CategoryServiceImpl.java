@@ -1,5 +1,6 @@
 package ru.practicum.service;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -15,7 +16,6 @@ import ru.practicum.mapper.CategoryMapper;
 import ru.practicum.model.Category;
 import ru.practicum.repository.CategoryRepository;
 
-import jakarta.validation.Valid;
 import java.util.List;
 
 @Service

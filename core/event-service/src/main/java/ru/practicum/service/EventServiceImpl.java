@@ -3,7 +3,6 @@ package ru.practicum.service;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.antlr.v4.runtime.atn.ATNConfig;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -48,7 +47,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static ru.practicum.model.QEvent.event;
-
 
 
 @Slf4j
@@ -454,7 +452,7 @@ public class EventServiceImpl implements EventService {
         if (updateParams.updateEventAdminRequest() != null) { // admin section
 
             if (updateParams.updateEventAdminRequest().category() != null) {
-                Category category  = categoryRepository.findById(updateParams.updateEventAdminRequest().category())
+                Category category = categoryRepository.findById(updateParams.updateEventAdminRequest().category())
                         .orElseThrow(() -> new NotFoundException(
                                 "Category with id " + updateParams.updateEventAdminRequest().category() + " not found"));
                 event.setCategory(category);
