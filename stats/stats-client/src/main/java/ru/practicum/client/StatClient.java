@@ -1,16 +1,24 @@
 package ru.practicum.client;
 
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import ru.practicum.HitDto;
 import ru.practicum.HitStatDto;
 
 import java.util.List;
 
+@FeignClient(name = "stats-server")
 public interface StatClient {
 
-    void saveHit(HitDto hitDto);
+    @PostMapping("/hit")
+    void saveHit(@RequestBody HitDto hitDto);
 
-    List<HitStatDto> getStats(final String startTime,
-                              final String endTime,
-                              final List<String> uris,
-                              final Boolean unique);
+    @GetMapping("stats")
+    List<HitStatDto> getStats(@RequestParam(value = "start", required = false, defaultValue = "") String start,
+                              @RequestParam(value = "end", required = false, defaultValue = "") String end,
+                              @RequestParam(value = "uris", required = false, defaultValue = "") List<String> uris,
+                              @RequestParam(value = "unique", defaultValue = "false") Boolean unique);
 }

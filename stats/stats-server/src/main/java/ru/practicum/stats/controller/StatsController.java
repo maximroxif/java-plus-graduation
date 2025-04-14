@@ -21,7 +21,6 @@ public class StatsController {
     @PostMapping("/hit")
     @ResponseStatus(HttpStatus.CREATED)
     public HitDto saveHit(@RequestBody HitDto hitDto) {
-
         return statsService.saveHit(hitDto);
     }
 
@@ -29,7 +28,7 @@ public class StatsController {
     public List<HitStatDto> getHits(@RequestParam String start,
                              @RequestParam String end,
                              @RequestParam(required = false) List<String> uris,
-                             @RequestParam (required = false, defaultValue = "false") Boolean unique) {
+                             @RequestParam(required = false, defaultValue = "false") Boolean unique) {
         return statsService.getHits(start, end, uris, unique);
     }
 
