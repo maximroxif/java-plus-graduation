@@ -26,7 +26,6 @@ import ru.practicum.dto.location.LocationDto;
 import ru.practicum.dto.user.UserDto;
 import ru.practicum.enums.EventState;
 import ru.practicum.enums.RequestStatus;
-import ru.practicum.enums.StateAction;
 import ru.practicum.exception.AccessException;
 import ru.practicum.exception.ConflictException;
 import ru.practicum.exception.IncorrectValueException;
@@ -42,12 +41,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import static ru.practicum.model.QEvent.event;
-
 
 @Slf4j
 @Service
@@ -61,444 +57,496 @@ public class EventServiceImpl implements EventService {
     private final LikeServiceClient likeServiceClient;
     private final CategoryRepository categoryRepository;
     private final RequestServiceClient requestServiceClient;
-
     private final StatClient statClient;
 
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern(Constants.JSON_TIME_FORMAT);
 
+    /**
+     * Creates a new event.
+     *
+     * @param userId      the ID of the user creating the event
+     * @param newEventDto the DTO containing event details
+     * @return EventFullDto of the created event
+     * @throws NotFoundException if the category or user is not found
+     */
     @Override
+    @Transactional
     public EventFullDto create(long userId, NewEventDto newEventDto) {
-        UserDto savedUser = userServiceClient.getById(userId);
-        Category category = categoryRepository.findById(newEventDto.category())
-                .orElseThrow(() -> new NotFoundException("Category with id " + newEventDto.category() + " not found"));
+        log.info("Creating event for userId={} with title={}", userId, newEventDto.title());
+
+        UserDto user = userServiceClient.getById(userId);
+        log.debug("Retrieved user: id={}", userId);
+
+        Category category = findCategoryById(newEventDto.category());
+        log.debug("Retrieved category: id={}", category.getId());
+
         LocationDto locationDto = locationServiceClient.create(userId, newEventDto.location());
-        Event event = eventMapper.newEventDtoToEvent(
-                newEventDto, savedUser.id(), category, locationDto.id(), LocalDateTime.now());
+        log.debug("Created location: id={}", locationDto.id());
+
+        Event event = eventMapper.newEventDtoToEvent(newEventDto, userId, category, locationDto.id(), LocalDateTime.now());
+        log.debug("Mapped event: title={}", event.getTitle());
+
         Event savedEvent = eventRepository.save(event);
-        savedEvent.setInitiator(savedUser);
+        log.info("Event created successfully: id={}", savedEvent.getId());
+
+        savedEvent.setInitiator(user);
         savedEvent.setLocation(locationDto);
         return eventMapper.eventToEventFullDto(savedEvent);
     }
 
+    /**
+     * Retrieves events created by a specific initiator.
+     *
+     * @param searchParams search parameters including initiator ID and pagination
+     * @return list of EventShortDto objects
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getAllByInitiator(EventSearchParams searchParams) {
-
         long initiatorId = searchParams.getPrivateSearchParams().getInitiatorId();
+        log.info("Fetching events for initiatorId={}", initiatorId);
 
-        UserDto userDto = userServiceClient.getById(initiatorId);
+        UserDto user = userServiceClient.getById(initiatorId);
+        log.debug("Retrieved user: id={}", initiatorId);
+
         Pageable page = PageRequest.of(searchParams.getFrom(), searchParams.getSize());
-        List<Event> receivedEvents = eventRepository.findAllByInitiatorId(initiatorId, page);
+        log.debug("Created pageable: page={}, size={}", page.getPageNumber(), page.getPageSize());
 
-        List<Long> eventIds = receivedEvents.stream().map(Event::getId).toList();
-        Map<Long, Long> likesEventMap = likeServiceClient.getAllEventsLikesByIds(eventIds);
+        List<Event> events = eventRepository.findAllByInitiatorId(initiatorId, page);
+        log.debug("Retrieved {} events", events.size());
 
-        List<Long> locationIds = receivedEvents.stream().map(Event::getLocationId).toList();
-        Map<Long, LocationDto> locationDtoMap = locationServiceClient.getAllById(locationIds);
-
-        for (Event event : receivedEvents) {
-            event.setLikes(likesEventMap.get(event.getId()));
-            event.setLocation(locationDtoMap.get(event.getLocationId()));
-            event.setInitiator(userDto);
-        }
-
-        return receivedEvents.stream()
+        enrichEventsWithDetails(events);
+        return events.stream()
                 .map(eventMapper::eventToEventShortDto)
                 .toList();
     }
 
+    /**
+     * Retrieves events based on public search parameters.
+     *
+     * @param searchParams search parameters including text, categories, etc.
+     * @param hitDto       hit data for statistics
+     * @return list of EventShortDto objects
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getAllByPublic(EventSearchParams searchParams, HitDto hitDto) {
+        log.info("Fetching public events with searchParams={}", searchParams);
 
         Pageable page = PageRequest.of(searchParams.getFrom(), searchParams.getSize());
+        log.debug("Created pageable: page={}, size={}", page.getPageNumber(), page.getPageSize());
 
-        BooleanExpression booleanExpression = event.isNotNull();
-
-        PublicSearchParams publicSearchParams = searchParams.getPublicSearchParams();
-
-        if (publicSearchParams.getText() != null) { //наличие поиска по тексту
-            booleanExpression = booleanExpression.andAnyOf(
-                    event.annotation.likeIgnoreCase(publicSearchParams.getText()),
-                    event.description.likeIgnoreCase(publicSearchParams.getText())
-            );
-        }
-
-        if (publicSearchParams.getCategories() != null) { // наличие поиска по категориям
-            booleanExpression = booleanExpression.and(
-                    event.category.id.in((publicSearchParams.getCategories())));
-        }
-
-        if (publicSearchParams.getPaid() != null) { // наличие поиска по категориям
-            booleanExpression = booleanExpression.and(
-                    event.paid.eq(publicSearchParams.getPaid()));
-        }
-
-        LocalDateTime rangeStart = publicSearchParams.getRangeStart();
-        LocalDateTime rangeEnd = publicSearchParams.getRangeEnd();
-
-        if (rangeStart != null && rangeEnd != null) { // наличие поиска дате события
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.between(rangeStart, rangeEnd)
-            );
-        } else if (rangeStart != null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.after(rangeStart)
-            );
-            rangeEnd = rangeStart.plusYears(100);
-        } else if (publicSearchParams.getRangeEnd() != null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.before(rangeEnd)
-            );
-            rangeStart = LocalDateTime.parse(LocalDateTime.now().format(dateTimeFormatter), dateTimeFormatter);
-        }
-
-        if (rangeEnd == null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.after(LocalDateTime.now())
-            );
-            rangeStart = LocalDateTime.parse(LocalDateTime.now().format(dateTimeFormatter), dateTimeFormatter);
-            rangeEnd = rangeStart.plusYears(100);
-        }
-
-        List<Event> eventListBySearch =
-                eventRepository.findAll(booleanExpression, page).stream().toList();
+        BooleanExpression query = buildPublicSearchQuery(searchParams.getPublicSearchParams());
+        List<Event> events = eventRepository.findAll(query, page).stream().toList();
+        log.debug("Retrieved {} events", events.size());
 
         statClient.saveHit(hitDto);
+        log.debug("Saved hit for statistics");
 
-        List<Long> eventIds = eventListBySearch.stream().map(Event::getId).toList();
-        Map<Long, Long> likesEventMap = likeServiceClient.getAllEventsLikesByIds(eventIds);
-
-        Map<Long, UserDto> users = userServiceClient.getAll(eventListBySearch.stream()
-                .map(Event::getInitiatorId)
-                .toList());
-
-        List<Long> locationIds = eventListBySearch.stream().map(Event::getLocationId).toList();
-        Map<Long, LocationDto> locationDtoMap = locationServiceClient.getAllById(locationIds);
-
-        Map<Long, Long> countsOfConfirmedRequestsMap = requestServiceClient.countByStatusAndEventsIds(
-                RequestStatus.CONFIRMED, eventIds);
-
-        for (Event event : eventListBySearch) {
-            List<HitStatDto> hitStatDtoList = statClient.getStats(
-                    rangeStart.format(dateTimeFormatter),
-                    rangeEnd.format(dateTimeFormatter),
-                    List.of("/event/" + event.getId()),
-                    false);
-            Long view = 0L;
-            for (HitStatDto hitStatDto : hitStatDtoList) {
-                view += hitStatDto.getHits();
-            }
-            event.setViews(view);
-            event.setConfirmedRequests(countsOfConfirmedRequestsMap.get(event.getId()));
-            event.setLikes(likesEventMap.get(event.getId()));
-            event.setLocation(locationDtoMap.get(event.getLocationId()));
-            event.setInitiator(users.get(event.getInitiatorId()));
-        }
-
-        return eventListBySearch.stream()
+        enrichEventsWithDetails(events, searchParams.getPublicSearchParams().getRangeStart(),
+                searchParams.getPublicSearchParams().getRangeEnd());
+        return events.stream()
                 .map(eventMapper::eventToEventShortDto)
                 .toList();
     }
 
+    /**
+     * Retrieves top events by likes.
+     *
+     * @param count  number of events to return
+     * @param hitDto hit data for statistics
+     * @return list of EventShortDto objects
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getTopEvent(Integer count, HitDto hitDto) {
+        log.info("Fetching top {} events by likes", count);
 
-        String rangeEnd = LocalDateTime.now().format(dateTimeFormatter);
         String rangeStart = LocalDateTime.now().minusYears(100).format(dateTimeFormatter);
+        String rangeEnd = LocalDateTime.now().format(dateTimeFormatter);
+        log.debug("Time range: start={}, end={}", rangeStart, rangeEnd);
 
-        Map<Long, Long> likesEventMap = likeServiceClient.getTopLikedEventsIds(count);
-        List<Long> topEventsIds = new ArrayList<>(likesEventMap.keySet());
-        List<Event> eventTopList = eventRepository.findAllByIdIn(topEventsIds);
+        Map<Long, Long> likesMap = likeServiceClient.getTopLikedEventsIds(count);
+        List<Long> eventIds = new ArrayList<>(likesMap.keySet());
+        log.debug("Retrieved {} top event IDs", eventIds.size());
 
-        Map<Long, UserDto> users = userServiceClient.getAll(eventTopList.stream()
-                .map(Event::getInitiatorId)
-                .toList());
-
-        List<Long> locationIds = eventTopList.stream().map(Event::getLocationId).toList();
-        Map<Long, LocationDto> locationDtoMap = locationServiceClient.getAllById(locationIds);
-
-        Map<Long, Long> countsOfConfirmedRequestsMap = requestServiceClient.countByStatusAndEventsIds(
-                RequestStatus.CONFIRMED, topEventsIds);
+        List<Event> events = eventRepository.findAllByIdIn(eventIds);
+        log.debug("Retrieved {} events", events.size());
 
         statClient.saveHit(hitDto);
+        log.debug("Saved hit for statistics");
 
-        for (Event event : eventTopList) {
-            List<HitStatDto> hitStatDtoList = statClient.getStats(
-                    rangeStart,
-                    rangeEnd,
-                    List.of("/event/" + event.getId()),
-                    true);
-            Long view = 0L;
-            for (HitStatDto hitStatDto : hitStatDtoList) {
-                view += hitStatDto.getHits();
-            }
-            event.setViews(view);
-            event.setConfirmedRequests(countsOfConfirmedRequestsMap.get(event.getId()));
-            event.setLikes(likesEventMap.get(event.getId()));
-            event.setLocation(locationDtoMap.get(event.getLocationId()));
-            event.setInitiator(users.get(event.getInitiatorId()));
-        }
-
-        return eventTopList.stream()
+        enrichEventsWithDetails(events, LocalDateTime.parse(rangeStart, dateTimeFormatter),
+                LocalDateTime.parse(rangeEnd, dateTimeFormatter));
+        return events.stream()
                 .map(eventMapper::eventToEventShortDto)
                 .toList();
     }
 
+    /**
+     * Retrieves top events by views.
+     *
+     * @param count  number of events to return
+     * @param hitDto hit data for statistics
+     * @return list of EventShortDto objects
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getTopViewEvent(Integer count, HitDto hitDto) {
+        log.info("Fetching top {} events by views", count);
 
-        String rangeEnd = LocalDateTime.now().format(dateTimeFormatter);
         String rangeStart = LocalDateTime.now().minusYears(100).format(dateTimeFormatter);
+        String rangeEnd = LocalDateTime.now().format(dateTimeFormatter);
+        log.debug("Time range: start={}, end={}", rangeStart, rangeEnd);
 
         statClient.saveHit(hitDto);
+        log.debug("Saved hit for statistics");
 
-        List<HitStatDto> hitStatDtoList = statClient.getStats(
-                rangeStart,
-                rangeEnd,
-                null,
-                true);
+        List<HitStatDto> stats = statClient.getStats(rangeStart, rangeEnd, null, true);
+        log.debug("Retrieved {} stats entries", stats.size());
 
-        Map<Long, Long> idsMap = hitStatDtoList.stream().filter(it -> it.getUri().matches("\\/events\\/\\d+$"))
-                .collect((Collectors.groupingBy(dto ->
-                                Long.parseLong(dto.getUri().replace("/events/", "")),
-                        Collectors.summingLong(HitStatDto::getHits))));
+        Map<Long, Long> viewsMap = stats.stream()
+                .filter(it -> it.getUri().matches("\\/events\\/\\d+$"))
+                .collect(Collectors.groupingBy(
+                        dto -> Long.parseLong(dto.getUri().replace("/events/", "")),
+                        Collectors.summingLong(HitStatDto::getHits)));
 
-        Set<Long> ids = idsMap.keySet();
-        List<Event> eventListBySearch = eventRepository.findAllById(ids);
-        List<Event> result = new ArrayList<>();
-        idsMap.entrySet().stream()
-                .sorted(Map.Entry.<Long, Long>comparingByValue().reversed())
+        List<Event> events = eventRepository.findAllById(viewsMap.keySet()).stream()
+                .peek(event -> event.setViews(viewsMap.getOrDefault(event.getId(), 0L)))
+                .sorted((e1, e2) -> Long.compare(e2.getViews(), e1.getViews()))
                 .limit(count)
-                .forEach(it -> {
-                            Optional<Event> e = eventListBySearch.stream().filter(event ->
-                                    event.getId() == it.getKey()).findFirst();
-                            if (e.isPresent()) {
-                                Event eventRes = e.get();
-                                eventRes.setViews(it.getValue());
-                                result.add(eventRes);
-                            }
-                        }
-                );
-        Map<Long, UserDto> users = userServiceClient.getAll(result.stream()
-                .map(Event::getInitiatorId)
-                .toList());
+                .collect(Collectors.toList());
+        log.debug("Retrieved {} events after sorting", events.size());
 
-        for (Event event : result) {
-            event.setInitiator(users.get(event.getInitiatorId()));
-        }
-
-        return result.stream()
+        enrichEventsWithDetails(events);
+        return events.stream()
                 .map(eventMapper::eventToEventShortDto)
                 .toList();
     }
 
+    /**
+     * Retrieves events based on admin search parameters.
+     *
+     * @param searchParams search parameters including users, categories, etc.
+     * @return list of EventFullDto objects
+     */
     @Override
     @Transactional(readOnly = true)
     public List<EventFullDto> getAllByAdmin(EventSearchParams searchParams) {
-        Pageable page = PageRequest.of(
-                searchParams.getFrom(), searchParams.getSize());
+        log.info("Fetching events for admin with searchParams={}", searchParams);
 
-        BooleanExpression booleanExpression = event.isNotNull();
+        Pageable page = PageRequest.of(searchParams.getFrom(), searchParams.getSize());
+        log.debug("Created pageable: page={}, size={}", page.getPageNumber(), page.getPageSize());
 
-        if (searchParams.getAdminSearchParams().getUsers() != null) {
-            booleanExpression = booleanExpression.and(
-                    event.initiatorId.in(searchParams.getAdminSearchParams().getUsers()));
-        }
+        BooleanExpression query = buildAdminSearchQuery(searchParams);
+        List<Event> events = eventRepository.findAll(query, page).stream().toList();
+        log.debug("Retrieved {} events", events.size());
 
-        if (searchParams.getAdminSearchParams().getCategories() != null) {
-            booleanExpression = booleanExpression.and(
-                    event.category.id.in(searchParams.getAdminSearchParams().getCategories()));
-        }
-
-        if (searchParams.getAdminSearchParams().getStates() != null) {
-            booleanExpression = booleanExpression.and(
-                    event.state.in(searchParams.getAdminSearchParams().getStates()));
-        }
-
-        LocalDateTime rangeStart = searchParams.getAdminSearchParams().getRangeStart();
-        LocalDateTime rangeEnd = searchParams.getAdminSearchParams().getRangeEnd();
-
-        if (rangeStart != null && rangeEnd != null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.between(rangeStart, rangeEnd));
-        } else if (rangeStart != null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.after(rangeStart));
-        } else if (rangeEnd != null) {
-            booleanExpression = booleanExpression.and(
-                    event.eventDate.before(rangeEnd));
-        }
-
-        List<Event> receivedEventList = eventRepository.findAll(booleanExpression, page).stream().toList();
-
-        List<Long> eventIds = receivedEventList.stream().map(Event::getId).toList();
-        Map<Long, Long> likesEventMap = likeServiceClient.getAllEventsLikesByIds(eventIds);
-
-        List<Long> locationIds = receivedEventList.stream().map(Event::getLocationId).toList();
-        Map<Long, LocationDto> locationDtoMap = locationServiceClient.getAllById(locationIds);
-
-        Map<Long, Long> countsOfConfirmedRequestsMap = requestServiceClient.countByStatusAndEventsIds(
-                RequestStatus.CONFIRMED, eventIds);
-
-        Map<Long, UserDto> users = userServiceClient.getAll(receivedEventList.stream()
-                .map(Event::getInitiatorId)
-                .toList());
-
-        for (Event event : receivedEventList) {
-            event.setConfirmedRequests(countsOfConfirmedRequestsMap.get(event.getId()));
-            event.setLikes(likesEventMap.get(event.getId()));
-            event.setLocation(locationDtoMap.get(event.getLocationId()));
-            event.setInitiator(users.get(event.getInitiatorId()));
-        }
-
-        return receivedEventList
-                .stream()
+        enrichEventsWithDetails(events);
+        return events.stream()
                 .map(eventMapper::eventToEventFullDto)
                 .toList();
-
     }
 
-
+    /**
+     * Retrieves an event by ID, optionally checking initiator.
+     *
+     * @param params parameters including event ID and optional initiator ID
+     * @param hitDto hit data for statistics
+     * @return EventFullDto of the event
+     * @throws NotFoundException if the event is not found
+     */
     @Override
     @Transactional(readOnly = true)
     public EventFullDto getById(EventGetByIdParams params, HitDto hitDto) {
-        Event receivedEvent;
+        log.info("Fetching event with id={} for initiatorId={}", params.eventId(), params.initiatorId());
+
+        Event event;
         if (params.initiatorId() != null) {
             userServiceClient.checkExistence(params.initiatorId());
-            receivedEvent = eventRepository.findByInitiatorIdAndId(params.initiatorId(), params.eventId())
-                    .orElseThrow(() -> new NotFoundException(
-                            "Event with id " + params.eventId() +
-                                    " created by user with id " + params.initiatorId() + " not found"));
+            event = eventRepository.findByInitiatorIdAndId(params.initiatorId(), params.eventId())
+                    .orElseThrow(() -> {
+                        log.error("Event with id={} not found for initiatorId={}", params.eventId(), params.initiatorId());
+                        return new NotFoundException(String.format(
+                                "Event with id=%d created by user with id=%d not found", params.eventId(), params.initiatorId()));
+                    });
         } else {
-            receivedEvent = eventRepository.findById(params.eventId())
-                    .orElseThrow(() -> new NotFoundException("Event with id " + params.eventId() + " not found"));
+            event = findEventById(params.eventId());
             statClient.saveHit(hitDto);
+            log.debug("Saved hit for statistics");
 
-            List<HitStatDto> hitStatDtoList = statClient.getStats(
-                    "", "", List.of("/events/" + params.eventId()), true
-            );
-            Long view = 0L;
-            for (HitStatDto hitStatDto : hitStatDtoList) {
-                view += hitStatDto.getHits();
-            }
+            List<HitStatDto> stats = statClient.getStats("", "", List.of("/events/" + params.eventId()), true);
+            long views = stats.stream().mapToLong(HitStatDto::getHits).sum();
+            event.setViews(views);
+            log.debug("Set views={} for eventId={}", views, event.getId());
 
-            receivedEvent.setViews(view);
-            receivedEvent.setConfirmedRequests(
-                    requestServiceClient.countByStatusAndEventId(RequestStatus.CONFIRMED, receivedEvent.getId()));
-            receivedEvent.setLikes(likeServiceClient.getCountByEventId(receivedEvent.getId()));
-            receivedEvent.setLocation(locationServiceClient.getById(receivedEvent.getLocationId()));
+            event.setConfirmedRequests(requestServiceClient.countByStatusAndEventId(RequestStatus.CONFIRMED, event.getId()));
+            event.setLikes(likeServiceClient.getCountByEventId(event.getId()));
+            event.setLocation(locationServiceClient.getById(event.getLocationId()));
         }
-        UserDto initiator = userServiceClient.getById(receivedEvent.getInitiatorId());
-        receivedEvent.setInitiator(initiator);
-        return eventMapper.eventToEventFullDto(receivedEvent);
+
+        UserDto initiator = userServiceClient.getById(event.getInitiatorId());
+        event.setInitiator(initiator);
+        log.info("Retrieved event: id={}, title={}", event.getId(), event.getTitle());
+
+        return eventMapper.eventToEventFullDto(event);
     }
 
+    /**
+     * Updates an existing event.
+     *
+     * @param eventId      the ID of the event to update
+     * @param updateParams update parameters for user or admin
+     * @return EventFullDto of the updated event
+     * @throws NotFoundException if the event or category is not found
+     */
     @Override
+    @Transactional
     public EventFullDto update(long eventId, EventUpdateParams updateParams) {
-        Event event = eventRepository.findById(eventId)
-                .orElseThrow(() -> new NotFoundException("Event with id " + eventId + " not found"));
+        log.info("Updating event with id={} for userId={}", eventId, updateParams.userId());
 
-        Event updatedEvent;
+        Event event = findEventById(eventId);
+        log.debug("Retrieved event: id={}, state={}", event.getId(), event.getState());
 
-        if (updateParams.updateEventUserRequest() != null) { // private section
-            userServiceClient.checkExistence(updateParams.userId());
-            if (updateParams.updateEventUserRequest().category() != null) {
-                Category category = categoryRepository.findById(updateParams.updateEventUserRequest().category())
-                        .orElseThrow(() -> new NotFoundException(
-                                "Category with id " + updateParams.updateEventUserRequest().category() + " not found"));
-                event.setCategory(category);
-            }
-            if (!updateParams.userId().equals(event.getInitiatorId())) {
-                throw new AccessException("User with id = " + updateParams.userId() + " do not initiate this event");
-            }
-
-            if (event.getState() != EventState.PENDING && event.getState() != EventState.CANCELED) {
-                throw new ConflictException(
-                        "User. Cannot update event: only pending or canceled events can be changed");
-            }
-
-            LocalDateTime eventDate = updateParams.updateEventUserRequest().eventDate();
-
-            if (eventDate != null &&
-                    eventDate.isBefore(LocalDateTime.now().plusHours(2))) {
-                throw new ConflictException(
-                        "User. Cannot update event: event date must be not earlier then after 2 hours ");
-            }
-
-            StateAction stateAction = updateParams.updateEventUserRequest().stateAction();
-            log.debug("State action received from params: {}", stateAction);
-
-            if (stateAction != null) {
-                switch (stateAction) {
-                    case CANCEL_REVIEW -> event.setState(EventState.CANCELED);
-
-                    case SEND_TO_REVIEW -> event.setState(EventState.PENDING);
-                }
-            }
-
-            if (updateParams.updateEventUserRequest().location() != null) {
-                event.setLocationId(updateParams.updateEventUserRequest().location().id());
-            }
-
-            log.debug("Private. Событие до мапинга: {}", event);
-            eventMapper.updateEventUserRequestToEvent(event, updateParams.updateEventUserRequest());
-            log.debug("Private. Событие после мапинга для сохранения: {}", event);
-
+        if (updateParams.updateEventUserRequest() != null) {
+            updateEventForUser(event, updateParams);
+        } else if (updateParams.updateEventAdminRequest() != null) {
+            updateEventForAdmin(event, updateParams);
         }
 
-        if (updateParams.updateEventAdminRequest() != null) { // admin section
+        Event updatedEvent = eventRepository.save(event);
+        log.info("Event updated successfully: id={}", updatedEvent.getId());
 
-            if (updateParams.updateEventAdminRequest().category() != null) {
-                Category category = categoryRepository.findById(updateParams.updateEventAdminRequest().category())
-                        .orElseThrow(() -> new NotFoundException(
-                                "Category with id " + updateParams.updateEventAdminRequest().category() + " not found"));
-                event.setCategory(category);
-            }
-
-            if (event.getState() != EventState.PENDING) {
-                throw new ConflictException("Admin. Cannot update event: only pending events can be changed");
-            }
-
-            if (updateParams.updateEventAdminRequest().eventDate() != null &&
-                    updateParams.updateEventAdminRequest().eventDate().isBefore(LocalDateTime.now().plusHours(1))) {
-                throw new IncorrectValueException(
-                        "Admin. Cannot update event: event date must be not earlier then after 2 hours ");
-            }
-            log.debug("Admin. Событие до мапинга: {}; {}", event.getId(), event.getState());
-            eventMapper.updateEventAdminRequestToEvent(event, updateParams.updateEventAdminRequest());
-            log.debug("Admin. Событие после мапинга для сохранения: {}, {}", event.getId(), event.getState());
-
-        }
-        event.setId(eventId);
-
-        updatedEvent = eventRepository.save(event);
-
-        updatedEvent.setLikes(likeServiceClient.getCountByEventId(updatedEvent.getId()));
-
-        updatedEvent.setLocation(locationServiceClient.getById(updatedEvent.getLocationId()));
-
-        updatedEvent.setConfirmedRequests(requestServiceClient.countByStatusAndEventId(
-                RequestStatus.CONFIRMED, updatedEvent.getId()));
-
-        updatedEvent.setInitiator(userServiceClient.getById(updatedEvent.getInitiatorId()));
-
-        log.debug("Событие возвращенное из базы: {} ; {}", event.getId(), event.getState());
-
+        enrichEventWithDetails(updatedEvent);
         return eventMapper.eventToEventFullDto(updatedEvent);
     }
 
+    /**
+     * Retrieves an event by ID for internal use.
+     *
+     * @param eventId the ID of the event
+     * @return EventFullDto of the event
+     * @throws NotFoundException if the event is not found
+     */
     @Override
+    @Transactional(readOnly = true)
     public EventFullDto getByIdInternal(long eventId) {
-        Event savedEvent = eventRepository.findById(eventId)
-                .orElseThrow(() -> new NotFoundException("Event with id " + eventId + " not found"));
-        savedEvent.setInitiator(userServiceClient.getById(savedEvent.getInitiatorId()));
-        return eventMapper.eventToEventFullDto(savedEvent);
+        log.info("Fetching event internally with id={}", eventId);
+
+        Event event = findEventById(eventId);
+        log.debug("Retrieved event: id={}, title={}", event.getId(), event.getTitle());
+
+        UserDto initiator = userServiceClient.getById(event.getInitiatorId());
+        event.setInitiator(initiator);
+        return eventMapper.eventToEventFullDto(event);
     }
 
+    /**
+     * Helper method to find an event by ID.
+     */
+    private Event findEventById(Long eventId) {
+        return eventRepository.findById(eventId)
+                .orElseThrow(() -> {
+                    log.error("Event with id={} not found", eventId);
+                    return new NotFoundException(String.format("Event with id=%d not found", eventId));
+                });
+    }
+
+    /**
+     * Helper method to find a category by ID.
+     */
+    private Category findCategoryById(Long categoryId) {
+        return categoryRepository.findById(categoryId)
+                .orElseThrow(() -> {
+                    log.error("Category with id={} not found", categoryId);
+                    return new NotFoundException(String.format("Category with id=%d not found", categoryId));
+                });
+    }
+
+    /**
+     * Enriches events with additional details (likes, locations, users, etc.).
+     */
+    private void enrichEventsWithDetails(List<Event> events) {
+        enrichEventsWithDetails(events, null, null);
+    }
+
+    private void enrichEventsWithDetails(List<Event> events, LocalDateTime rangeStart, LocalDateTime rangeEnd) {
+        if (events.isEmpty()) {
+            log.debug("No events to enrich");
+            return;
+        }
+
+        List<Long> eventIds = events.stream().map(Event::getId).toList();
+        Map<Long, Long> likesMap = likeServiceClient.getAllEventsLikesByIds(eventIds);
+        Map<Long, Long> confirmedRequestsMap = requestServiceClient.countByStatusAndEventsIds(RequestStatus.CONFIRMED, eventIds);
+        Map<Long, LocationDto> locationMap = locationServiceClient.getAllById(events.stream().map(Event::getLocationId).toList());
+        Map<Long, UserDto> userMap = userServiceClient.getAll(events.stream().map(Event::getInitiatorId).toList());
+
+        for (Event event : events) {
+            if (rangeStart != null && rangeEnd != null) {
+                List<HitStatDto> stats = statClient.getStats(
+                        rangeStart.format(dateTimeFormatter),
+                        rangeEnd.format(dateTimeFormatter),
+                        List.of("/event/" + event.getId()),
+                        false);
+                long views = stats.stream().mapToLong(HitStatDto::getHits).sum();
+                event.setViews(views);
+            }
+            event.setLikes(likesMap.getOrDefault(event.getId(), 0L));
+            event.setConfirmedRequests(confirmedRequestsMap.getOrDefault(event.getId(), 0L));
+            event.setLocation(locationMap.get(event.getLocationId()));
+            event.setInitiator(userMap.get(event.getInitiatorId()));
+        }
+        log.debug("Enriched {} events with details", events.size());
+    }
+
+    /**
+     * Enriches a single event with additional details.
+     */
+    private void enrichEventWithDetails(Event event) {
+        event.setLikes(likeServiceClient.getCountByEventId(event.getId()));
+        event.setConfirmedRequests(requestServiceClient.countByStatusAndEventId(RequestStatus.CONFIRMED, event.getId()));
+        event.setLocation(locationServiceClient.getById(event.getLocationId()));
+        event.setInitiator(userServiceClient.getById(event.getInitiatorId()));
+        log.debug("Enriched event with id={}", event.getId());
+    }
+
+    /**
+     * Builds a QueryDSL expression for public event search.
+     */
+    private BooleanExpression buildPublicSearchQuery(PublicSearchParams params) {
+        BooleanExpression query = event.isNotNull();
+
+        if (params.getText() != null) {
+            query = query.andAnyOf(
+                    event.annotation.likeIgnoreCase(params.getText()),
+                    event.description.likeIgnoreCase(params.getText()));
+            log.debug("Added text filter: {}", params.getText());
+        }
+        if (params.getCategories() != null) {
+            query = query.and(event.category.id.in(params.getCategories()));
+            log.debug("Added categories filter: {}", params.getCategories());
+        }
+        if (params.getPaid() != null) {
+            query = query.and(event.paid.eq(params.getPaid()));
+            log.debug("Added paid filter: {}", params.getPaid());
+        }
+
+        LocalDateTime rangeStart = params.getRangeStart();
+        LocalDateTime rangeEnd = params.getRangeEnd();
+        if (rangeStart != null && rangeEnd != null) {
+            query = query.and(event.eventDate.between(rangeStart, rangeEnd));
+            log.debug("Added date range filter: start={}, end={}", rangeStart, rangeEnd);
+        } else if (rangeStart != null) {
+            query = query.and(event.eventDate.after(rangeStart));
+            log.debug("Added start date filter: {}", rangeStart);
+        } else if (rangeEnd != null) {
+            query = query.and(event.eventDate.before(rangeEnd));
+            log.debug("Added end date filter: {}", rangeEnd);
+        } else {
+            query = query.and(event.eventDate.after(LocalDateTime.now()));
+            log.debug("Added default future date filter");
+        }
+
+        return query;
+    }
+
+    /**
+     * Builds a QueryDSL expression for admin event search.
+     */
+    private BooleanExpression buildAdminSearchQuery(EventSearchParams params) {
+        BooleanExpression query = event.isNotNull();
+
+        if (params.getAdminSearchParams().getUsers() != null) {
+            query = query.and(event.initiatorId.in(params.getAdminSearchParams().getUsers()));
+            log.debug("Added users filter: {}", params.getAdminSearchParams().getUsers());
+        }
+        if (params.getAdminSearchParams().getCategories() != null) {
+            query = query.and(event.category.id.in(params.getAdminSearchParams().getCategories()));
+            log.debug("Added categories filter: {}", params.getAdminSearchParams().getCategories());
+        }
+        if (params.getAdminSearchParams().getStates() != null) {
+            query = query.and(event.state.in(params.getAdminSearchParams().getStates()));
+            log.debug("Added states filter: {}", params.getAdminSearchParams().getStates());
+        }
+
+        LocalDateTime rangeStart = params.getAdminSearchParams().getRangeStart();
+        LocalDateTime rangeEnd = params.getAdminSearchParams().getRangeEnd();
+        if (rangeStart != null && rangeEnd != null) {
+            query = query.and(event.eventDate.between(rangeStart, rangeEnd));
+            log.debug("Added date range filter: start={}, end={}", rangeStart, rangeEnd);
+        } else if (rangeStart != null) {
+            query = query.and(event.eventDate.after(rangeStart));
+            log.debug("Added start date filter: {}", rangeStart);
+        } else if (rangeEnd != null) {
+            query = query.and(event.eventDate.before(rangeEnd));
+            log.debug("Added end date filter: {}", rangeEnd);
+        }
+
+        return query;
+    }
+
+    /**
+     * Updates an event for a user.
+     */
+    private void updateEventForUser(Event event, EventUpdateParams params) {
+        userServiceClient.checkExistence(params.userId());
+        if (!params.userId().equals(event.getInitiatorId())) {
+            log.error("UserId={} is not the initiator of eventId={}", params.userId(), event.getId());
+            throw new AccessException(String.format("User with id=%d does not initiate this event", params.userId()));
+        }
+
+        if (event.getState() != EventState.PENDING && event.getState() != EventState.CANCELED) {
+            log.error("Cannot update eventId={} with state={}", event.getId(), event.getState());
+            throw new ConflictException("Only PENDING or CANCELED events can be changed");
+        }
+
+        var request = params.updateEventUserRequest();
+        if (request.category() != null) {
+            Category category = findCategoryById(request.category());
+            event.setCategory(category);
+            log.debug("Updated category to id={}", category.getId());
+        }
+        if (request.eventDate() != null && request.eventDate().isBefore(LocalDateTime.now().plusHours(2))) {
+            log.error("Event date for eventId={} is too soon: {}", event.getId(), request.eventDate());
+            throw new ConflictException("Event date must be at least 2 hours from now");
+        }
+        if (request.stateAction() != null) {
+            switch (request.stateAction()) {
+                case CANCEL_REVIEW -> event.setState(EventState.CANCELED);
+                case SEND_TO_REVIEW -> event.setState(EventState.PENDING);
+            }
+            log.debug("Updated state to: {}", event.getState());
+        }
+        if (request.location() != null) {
+            event.setLocationId(request.location().id());
+            log.debug("Updated location to id={}", request.location().id());
+        }
+
+        eventMapper.updateEventUserRequestToEvent(event, request);
+        log.debug("Applied user updates to eventId={}", event.getId());
+    }
+
+    /**
+     * Updates an event for an admin.
+     */
+    private void updateEventForAdmin(Event event, EventUpdateParams params) {
+        var request = params.updateEventAdminRequest();
+        if (request.category() != null) {
+            Category category = findCategoryById(request.category());
+            event.setCategory(category);
+            log.debug("Updated category to id={}", category.getId());
+        }
+        if (event.getState() != EventState.PENDING) {
+            log.error("Cannot update eventId={} with state={}", event.getId(), event.getState());
+            throw new ConflictException("Only PENDING events can be changed by admin");
+        }
+        if (request.eventDate() != null && request.eventDate().isBefore(LocalDateTime.now().plusHours(1))) {
+            log.error("Event date for eventId={} is too soon: {}", event.getId(), request.eventDate());
+            throw new IncorrectValueException("Event date must be at least 1 hour from now");
+        }
+
+        eventMapper.updateEventAdminRequestToEvent(event, request);
+        log.debug("Applied admin updates to eventId={}", event.getId());
+    }
 }
-
-
-

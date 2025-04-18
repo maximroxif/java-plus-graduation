@@ -2,10 +2,10 @@ package ru.practicum.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import ru.practicum.dto.compilation.CompilationDto;
 import ru.practicum.dto.compilation.NewCompilationDto;
 import ru.practicum.dto.compilation.UpdateCompilationRequestDto;
@@ -18,146 +18,182 @@ import ru.practicum.model.Event;
 import ru.practicum.repository.CompilationRepository;
 import ru.practicum.repository.EventRepository;
 
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Slf4j
-@Transactional(readOnly = true)
 public class CompilationServiceImpl implements CompilationService {
 
     private final CompilationRepository compilationRepository;
-    private final EventRepository eventRepository;
     private final CompilationMapper compilationMapper;
+    private final EventRepository eventRepository;
     private final EventMapper eventMapper;
 
+    /**
+     * Retrieves a paginated list of compilations, optionally filtered by pinned status.
+     *
+     * @param pinned optional filter for pinned compilations; if null, all compilations are returned
+     * @param from   starting index for pagination
+     * @param size   number of compilations per page
+     * @return list of CompilationDto objects
+     */
     @Override
     public List<CompilationDto> getAll(Boolean pinned, int from, int size) {
-        log.info("Fetching compilations with pinned={}, from={}, size={}", pinned, from, size);
-
-        if (size <= 0) {
-            log.warn("Invalid size value: {}, returning empty list", size);
-            return Collections.emptyList();
-        }
+        log.info("Fetching compilations: pinned={}, from={}, size={}", pinned, from, size);
 
         Pageable pageable = PageRequest.of(from > 0 ? from / size : 0, size);
-        List<Compilation> compilations = (pinned != null)
-                ? compilationRepository.findAllByPinned(pinned, pageable).getContent()
-                : compilationRepository.findAll(pageable).getContent();
+        log.debug("Created pageable: page={}, size={}", pageable.getPageNumber(), pageable.getPageSize());
 
-        log.info("Found {} compilations", compilations.size());
-        return compilations.stream()
-                .map(this::mapToCompilationDto)
+        Page<Compilation> compilationsPage = pinned == null
+                ? compilationRepository.findAll(pageable)
+                : compilationRepository.findAllByPinned(pinned, pageable);
+        log.debug("Retrieved {} compilations", compilationsPage.getContent().size());
+
+        List<CompilationDto> compilationDtos = compilationsPage.getContent().stream()
+                .map(compilation -> compilationMapper.toCompilationDto(
+                        compilation,
+                        compilation.getEvents().stream()
+                                .map(eventMapper::eventToEventShortDto)
+                                .toList()))
                 .toList();
+        log.info("Returning {} compilations", compilationDtos.size());
+
+        return compilationDtos;
     }
 
+    /**
+     * Retrieves a compilation by its ID.
+     *
+     * @param id the ID of the compilation
+     * @return CompilationDto object
+     * @throws NotFoundException if the compilation is not found
+     */
     @Override
     public CompilationDto getById(Long id) {
         log.info("Fetching compilation with id={}", id);
 
-        if (id == null) {
-            log.error("Compilation id is null");
-            throw new IllegalArgumentException("Compilation id cannot be null");
-        }
-
         Compilation compilation = findCompilationById(id);
-        log.debug("Compilation id={} found", id);
+        log.debug("Retrieved compilation: id={}, title={}", compilation.getId(), compilation.getTitle());
 
-        return mapToCompilationDto(compilation);
+        List<EventShortDto> events = compilation.getEvents().stream()
+                .map(eventMapper::eventToEventShortDto)
+                .toList();
+        log.debug("Mapped {} events for compilation id={}", events.size(), id);
+
+        CompilationDto compilationDto = compilationMapper.toCompilationDto(compilation, events);
+        log.info("Returning compilation: id={}, title={}", compilationDto.getId(), compilationDto.getTitle());
+
+        return compilationDto;
     }
 
+    /**
+     * Deletes a compilation by its ID.
+     *
+     * @param compilationId the ID of the compilation
+     * @throws NotFoundException if the compilation is not found
+     */
     @Override
-    @Transactional
     public void delete(long compilationId) {
         log.info("Deleting compilation with id={}", compilationId);
 
-        findCompilationById(compilationId); // Проверка существования
+        Compilation compilation = findCompilationById(compilationId);
+        log.debug("Compilation found for deletion: id={}, title={}", compilation.getId(), compilation.getTitle());
+
         compilationRepository.deleteById(compilationId);
-        log.info("Compilation id={} successfully deleted", compilationId);
+        log.info("Compilation deleted successfully: id={}", compilationId);
     }
 
+    /**
+     * Creates a new compilation from the provided DTO.
+     *
+     * @param dto the NewCompilationDto containing compilation details
+     * @return CompilationDto object for the created compilation
+     */
     @Override
-    @Transactional
     public CompilationDto createCompilation(NewCompilationDto dto) {
-        log.info("Creating new compilation: {}", dto);
+        log.info("Creating new compilation with title={}", dto.getTitle());
 
-        if (dto == null) {
-            log.error("NewCompilationDto is null");
-            throw new IllegalArgumentException("NewCompilationDto cannot be null");
+        List<Event> events = new ArrayList<>();
+        if (dto.getEvents() != null && !dto.getEvents().isEmpty()) {
+            events = eventRepository.findAllById(dto.getEvents());
+            log.debug("Retrieved {} events for compilation: eventIds={}", events.size(), dto.getEvents());
+        } else {
+            log.debug("No events provided for compilation");
         }
 
-        List<Event> events = getEventsByIds(dto.getEvents());
         Compilation compilation = compilationMapper.toCompilation(dto, events);
-        Compilation savedCompilation = compilationRepository.save(compilation);
-        log.info("Compilation successfully created with id={}", savedCompilation.getId());
+        log.debug("Mapped NewCompilationDto to Compilation: {}", compilation);
 
-        return mapToCompilationDto(savedCompilation);
+        Compilation savedCompilation = compilationRepository.save(compilation);
+        log.info("Compilation created successfully: id={}, title={}", savedCompilation.getId(), savedCompilation.getTitle());
+
+        List<EventShortDto> eventDtos = savedCompilation.getEvents().stream()
+                .map(eventMapper::eventToEventShortDto)
+                .toList();
+        log.debug("Mapped {} events for compilation id={}", eventDtos.size(), savedCompilation.getId());
+
+        return compilationMapper.toCompilationDto(savedCompilation, eventDtos);
     }
 
+    /**
+     * Updates an existing compilation with the provided DTO.
+     *
+     * @param id  the ID of the compilation to update
+     * @param dto the UpdateCompilationRequestDto containing updated details
+     * @return CompilationDto object for the updated compilation
+     * @throws NotFoundException if the compilation is not found
+     */
     @Override
-    @Transactional
     public CompilationDto updateCompilation(Long id, UpdateCompilationRequestDto dto) {
-        log.info("Updating compilation id={} with data: {}", id, dto);
-
-        if (id == null || dto == null) {
-            log.error("Compilation id or UpdateCompilationRequestDto is null: id={}, dto={}", id, dto);
-            throw new IllegalArgumentException("Compilation id and UpdateCompilationRequestDto cannot be null");
-        }
+        log.info("Updating compilation with id={}", id);
 
         Compilation compilation = findCompilationById(id);
+        log.debug("Retrieved compilation: id={}, title={}", compilation.getId(), compilation.getTitle());
 
         if (dto.getPinned() != null) {
             compilation.setPinned(dto.getPinned());
-            log.debug("Updated pinned status to {}", dto.getPinned());
+            log.debug("Updated pinned status to: {}", dto.getPinned());
         }
-
-        if (dto.getTitle() != null && !dto.getTitle().isBlank()) {
+        if (dto.getTitle() != null) {
             compilation.setTitle(dto.getTitle());
-            log.debug("Updated title to {}", dto.getTitle());
+            log.debug("Updated title to: {}", dto.getTitle());
         }
-
         if (dto.getEvents() != null) {
-            List<Event> events = getEventsByIds(dto.getEvents());
+            List<Event> events = new ArrayList<>();
+            if (!dto.getEvents().isEmpty()) {
+                events = eventRepository.findAllById(dto.getEvents());
+                log.debug("Retrieved {} events for compilation: eventIds={}", events.size(), dto.getEvents());
+            } else {
+                log.debug("Empty event list provided; clearing events");
+            }
             compilation.setEvents(events);
-            log.debug("Updated events list with {} events", events.size());
         }
 
         Compilation updatedCompilation = compilationRepository.save(compilation);
-        log.info("Compilation id={} successfully updated", id);
+        log.info("Compilation updated successfully: id={}, title={}", updatedCompilation.getId(), updatedCompilation.getTitle());
 
-        return mapToCompilationDto(updatedCompilation);
-    }
-
-    private Compilation findCompilationById(Long id) {
-        return compilationRepository.findById(id)
-                .orElseThrow(() -> {
-                    log.error("Compilation with id={} not found", id);
-                    return new NotFoundException("Compilation with id=" + id + " not found");
-                });
-    }
-
-    private List<Event> getEventsByIds(List<Long> eventIds) {
-        if (eventIds == null || eventIds.isEmpty()) {
-            log.debug("No event IDs provided, returning empty list");
-            return Collections.emptyList();
-        }
-
-        log.debug("Fetching events with IDs: {}", eventIds);
-        List<Event> events = eventRepository.findAllById(eventIds);
-
-        if (events.size() != eventIds.size()) {
-            log.error("Not all events found for IDs: {}", eventIds);
-            throw new NotFoundException("Some events not found");
-        }
-
-        return events;
-    }
-
-    private CompilationDto mapToCompilationDto(Compilation compilation) {
-        List<EventShortDto> eventDtos = compilation.getEvents().stream()
+        List<EventShortDto> eventDtos = updatedCompilation.getEvents().stream()
                 .map(eventMapper::eventToEventShortDto)
                 .toList();
-        return compilationMapper.toCompilationDto(compilation, eventDtos);
+        log.debug("Mapped {} events for compilation id={}", eventDtos.size(), updatedCompilation.getId());
+
+        return compilationMapper.toCompilationDto(updatedCompilation, eventDtos);
+    }
+
+    /**
+     * Helper method to find a compilation by ID, throwing NotFoundException if not found.
+     *
+     * @param compilationId the ID of the compilation
+     * @return the found Compilation
+     * @throws NotFoundException if the compilation is not found
+     */
+    private Compilation findCompilationById(Long compilationId) {
+        return compilationRepository.findById(compilationId)
+                .orElseThrow(() -> {
+                    log.error("Compilation with id={} not found", compilationId);
+                    return new NotFoundException(String.format("Compilation with id=%d not found", compilationId));
+                });
     }
 }

@@ -15,13 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.practicum.dto.compilation.CompilationDto;
 import ru.practicum.dto.compilation.NewCompilationDto;
 import ru.practicum.dto.compilation.UpdateCompilationRequestDto;
+import ru.practicum.service.CompilationService;
 
 @Slf4j
 @RestController
 @RequestMapping(path = "/admin/compilations")
 @RequiredArgsConstructor
 public class AdminCompilationController {
-    private final ru.practicum.service.CompilationService compilationService;
+    private final CompilationService compilationService;
 
 
     @PostMapping

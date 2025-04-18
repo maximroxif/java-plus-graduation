@@ -15,6 +15,7 @@ import ru.practicum.constant.Constants;
 import ru.practicum.dto.event.EventFullDto;
 import ru.practicum.dto.event.UpdateEventAdminRequest;
 import ru.practicum.enums.EventState;
+import ru.practicum.service.EventService;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,7 +26,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AdminEventController {
 
-    private final ru.practicum.service.EventService eventService;
+    private final EventService eventService;
 
     @PatchMapping("{eventId}")
     public EventFullDto update(
