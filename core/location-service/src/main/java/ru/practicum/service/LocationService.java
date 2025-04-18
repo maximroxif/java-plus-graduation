@@ -18,5 +18,4 @@ public interface LocationService {
     LocationDto getById(@PathVariable long locationId);
 
 
-
 }

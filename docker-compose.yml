@@ -58,7 +58,7 @@ services:
       ## USER
   user-db:
     image: postgres:16.1
-    container_name:  postgres-ewm-user-db
+    container_name: postgres-ewm-user-db
     networks:
       - ewm-net
     environment:

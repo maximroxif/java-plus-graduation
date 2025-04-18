@@ -61,14 +61,7 @@ public class EventServiceImpl implements EventService {
 
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern(Constants.JSON_TIME_FORMAT);
 
-    /**
-     * Creates a new event.
-     *
-     * @param userId      the ID of the user creating the event
-     * @param newEventDto the DTO containing event details
-     * @return EventFullDto of the created event
-     * @throws NotFoundException if the category or user is not found
-     */
+
     @Override
     @Transactional
     public EventFullDto create(long userId, NewEventDto newEventDto) {
@@ -94,12 +87,6 @@ public class EventServiceImpl implements EventService {
         return eventMapper.eventToEventFullDto(savedEvent);
     }
 
-    /**
-     * Retrieves events created by a specific initiator.
-     *
-     * @param searchParams search parameters including initiator ID and pagination
-     * @return list of EventShortDto objects
-     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getAllByInitiator(EventSearchParams searchParams) {
@@ -121,13 +108,6 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
-    /**
-     * Retrieves events based on public search parameters.
-     *
-     * @param searchParams search parameters including text, categories, etc.
-     * @param hitDto       hit data for statistics
-     * @return list of EventShortDto objects
-     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getAllByPublic(EventSearchParams searchParams, HitDto hitDto) {
@@ -150,13 +130,6 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
-    /**
-     * Retrieves top events by likes.
-     *
-     * @param count  number of events to return
-     * @param hitDto hit data for statistics
-     * @return list of EventShortDto objects
-     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getTopEvent(Integer count, HitDto hitDto) {
@@ -183,13 +156,6 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
-    /**
-     * Retrieves top events by views.
-     *
-     * @param count  number of events to return
-     * @param hitDto hit data for statistics
-     * @return list of EventShortDto objects
-     */
     @Override
     @Transactional(readOnly = true)
     public List<EventShortDto> getTopViewEvent(Integer count, HitDto hitDto) {
@@ -224,12 +190,6 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
-    /**
-     * Retrieves events based on admin search parameters.
-     *
-     * @param searchParams search parameters including users, categories, etc.
-     * @return list of EventFullDto objects
-     */
     @Override
     @Transactional(readOnly = true)
     public List<EventFullDto> getAllByAdmin(EventSearchParams searchParams) {
@@ -248,14 +208,6 @@ public class EventServiceImpl implements EventService {
                 .toList();
     }
 
-    /**
-     * Retrieves an event by ID, optionally checking initiator.
-     *
-     * @param params parameters including event ID and optional initiator ID
-     * @param hitDto hit data for statistics
-     * @return EventFullDto of the event
-     * @throws NotFoundException if the event is not found
-     */
     @Override
     @Transactional(readOnly = true)
     public EventFullDto getById(EventGetByIdParams params, HitDto hitDto) {
@@ -292,14 +244,6 @@ public class EventServiceImpl implements EventService {
         return eventMapper.eventToEventFullDto(event);
     }
 
-    /**
-     * Updates an existing event.
-     *
-     * @param eventId      the ID of the event to update
-     * @param updateParams update parameters for user or admin
-     * @return EventFullDto of the updated event
-     * @throws NotFoundException if the event or category is not found
-     */
     @Override
     @Transactional
     public EventFullDto update(long eventId, EventUpdateParams updateParams) {
@@ -321,13 +265,6 @@ public class EventServiceImpl implements EventService {
         return eventMapper.eventToEventFullDto(updatedEvent);
     }
 
-    /**
-     * Retrieves an event by ID for internal use.
-     *
-     * @param eventId the ID of the event
-     * @return EventFullDto of the event
-     * @throws NotFoundException if the event is not found
-     */
     @Override
     @Transactional(readOnly = true)
     public EventFullDto getByIdInternal(long eventId) {
@@ -341,9 +278,6 @@ public class EventServiceImpl implements EventService {
         return eventMapper.eventToEventFullDto(event);
     }
 
-    /**
-     * Helper method to find an event by ID.
-     */
     private Event findEventById(Long eventId) {
         return eventRepository.findById(eventId)
                 .orElseThrow(() -> {
@@ -352,9 +286,6 @@ public class EventServiceImpl implements EventService {
                 });
     }
 
-    /**
-     * Helper method to find a category by ID.
-     */
     private Category findCategoryById(Long categoryId) {
         return categoryRepository.findById(categoryId)
                 .orElseThrow(() -> {
@@ -363,9 +294,6 @@ public class EventServiceImpl implements EventService {
                 });
     }
 
-    /**
-     * Enriches events with additional details (likes, locations, users, etc.).
-     */
     private void enrichEventsWithDetails(List<Event> events) {
         enrichEventsWithDetails(events, null, null);
     }
@@ -400,9 +328,6 @@ public class EventServiceImpl implements EventService {
         log.debug("Enriched {} events with details", events.size());
     }
 
-    /**
-     * Enriches a single event with additional details.
-     */
     private void enrichEventWithDetails(Event event) {
         event.setLikes(likeServiceClient.getCountByEventId(event.getId()));
         event.setConfirmedRequests(requestServiceClient.countByStatusAndEventId(RequestStatus.CONFIRMED, event.getId()));
@@ -411,9 +336,6 @@ public class EventServiceImpl implements EventService {
         log.debug("Enriched event with id={}", event.getId());
     }
 
-    /**
-     * Builds a QueryDSL expression for public event search.
-     */
     private BooleanExpression buildPublicSearchQuery(PublicSearchParams params) {
         BooleanExpression query = event.isNotNull();
 
@@ -451,9 +373,6 @@ public class EventServiceImpl implements EventService {
         return query;
     }
 
-    /**
-     * Builds a QueryDSL expression for admin event search.
-     */
     private BooleanExpression buildAdminSearchQuery(EventSearchParams params) {
         BooleanExpression query = event.isNotNull();
 
@@ -486,9 +405,6 @@ public class EventServiceImpl implements EventService {
         return query;
     }
 
-    /**
-     * Updates an event for a user.
-     */
     private void updateEventForUser(Event event, EventUpdateParams params) {
         userServiceClient.checkExistence(params.userId());
         if (!params.userId().equals(event.getInitiatorId())) {
@@ -527,9 +443,6 @@ public class EventServiceImpl implements EventService {
         log.debug("Applied user updates to eventId={}", event.getId());
     }
 
-    /**
-     * Updates an event for an admin.
-     */
     private void updateEventForAdmin(Event event, EventUpdateParams params) {
         var request = params.updateEventAdminRequest();
         if (request.category() != null) {

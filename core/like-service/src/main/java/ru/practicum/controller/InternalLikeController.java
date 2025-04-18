@@ -31,7 +31,7 @@ public class InternalLikeController {
     @GetMapping("/events")
     public Map<Long, Long> getAllEventsLikesByIds(@RequestParam List<Long> eventIdList) {
         log.info("==> GET /internal/likes Getting likes by eventIdList: {}", eventIdList);
-        Map<Long,Long> returnedLikesMap = likeService.getAllEventsLikesByIds(eventIdList);
+        Map<Long, Long> returnedLikesMap = likeService.getAllEventsLikesByIds(eventIdList);
         log.info("<== GET /internal/likes Returned likeList: {}", returnedLikesMap);
         return returnedLikesMap;
     }

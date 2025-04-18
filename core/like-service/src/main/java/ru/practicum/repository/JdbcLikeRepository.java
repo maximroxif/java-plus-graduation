@@ -38,10 +38,10 @@ public class JdbcLikeRepository implements LikeRepository {
 
     public Map<Long, Long> getAllEventsLikesByIds(List<Long> eventIds) {
         String sql = """
-                  select EVENT_ID, COUNT(*) as EVENT_COUNT
-                  from likes_events where event_id in ( :eventIds )
-                  GROUP BY EVENT_ID
-                  """;
+                select EVENT_ID, COUNT(*) as EVENT_COUNT
+                from likes_events where event_id in ( :eventIds )
+                GROUP BY EVENT_ID
+                """;
         List<Map<String, Object>> rows = jdbc.queryForList(sql, Map.of("eventIds", eventIds));
 
         Map<Long, Long> eventLikes = new HashMap<>();

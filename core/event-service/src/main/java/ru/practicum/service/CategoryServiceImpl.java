@@ -98,13 +98,6 @@ public class CategoryServiceImpl implements CategoryService {
         return categoryDto;
     }
 
-    /**
-     * Helper method to find a category by ID, throwing NotFoundException if not found.
-     *
-     * @param categoryId the ID of the category
-     * @return the found Category
-     * @throws NotFoundException if the category is not found
-     */
     private Category findCategoryById(Long categoryId) {
         return categoryRepository.findById(categoryId)
                 .orElseThrow(() -> {

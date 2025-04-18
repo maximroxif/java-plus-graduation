@@ -86,7 +86,6 @@ public abstract class EventMapper {
     }
 
 
-
     @Named("getPendingEventState")
     EventState getPendingEventState() {
         return EventState.PENDING;

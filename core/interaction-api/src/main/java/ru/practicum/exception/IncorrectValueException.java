@@ -1,4 +1,3 @@
-
 package ru.practicum.exception;
 
 import org.springframework.http.HttpStatus;

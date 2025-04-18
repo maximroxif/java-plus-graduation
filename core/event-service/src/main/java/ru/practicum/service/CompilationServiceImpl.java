@@ -31,14 +31,7 @@ public class CompilationServiceImpl implements CompilationService {
     private final EventRepository eventRepository;
     private final EventMapper eventMapper;
 
-    /**
-     * Retrieves a paginated list of compilations, optionally filtered by pinned status.
-     *
-     * @param pinned optional filter for pinned compilations; if null, all compilations are returned
-     * @param from   starting index for pagination
-     * @param size   number of compilations per page
-     * @return list of CompilationDto objects
-     */
+
     @Override
     public List<CompilationDto> getAll(Boolean pinned, int from, int size) {
         log.info("Fetching compilations: pinned={}, from={}, size={}", pinned, from, size);
@@ -63,13 +56,6 @@ public class CompilationServiceImpl implements CompilationService {
         return compilationDtos;
     }
 
-    /**
-     * Retrieves a compilation by its ID.
-     *
-     * @param id the ID of the compilation
-     * @return CompilationDto object
-     * @throws NotFoundException if the compilation is not found
-     */
     @Override
     public CompilationDto getById(Long id) {
         log.info("Fetching compilation with id={}", id);
@@ -88,12 +74,6 @@ public class CompilationServiceImpl implements CompilationService {
         return compilationDto;
     }
 
-    /**
-     * Deletes a compilation by its ID.
-     *
-     * @param compilationId the ID of the compilation
-     * @throws NotFoundException if the compilation is not found
-     */
     @Override
     public void delete(long compilationId) {
         log.info("Deleting compilation with id={}", compilationId);
@@ -105,12 +85,6 @@ public class CompilationServiceImpl implements CompilationService {
         log.info("Compilation deleted successfully: id={}", compilationId);
     }
 
-    /**
-     * Creates a new compilation from the provided DTO.
-     *
-     * @param dto the NewCompilationDto containing compilation details
-     * @return CompilationDto object for the created compilation
-     */
     @Override
     public CompilationDto createCompilation(NewCompilationDto dto) {
         log.info("Creating new compilation with title={}", dto.getTitle());
@@ -137,14 +111,6 @@ public class CompilationServiceImpl implements CompilationService {
         return compilationMapper.toCompilationDto(savedCompilation, eventDtos);
     }
 
-    /**
-     * Updates an existing compilation with the provided DTO.
-     *
-     * @param id  the ID of the compilation to update
-     * @param dto the UpdateCompilationRequestDto containing updated details
-     * @return CompilationDto object for the updated compilation
-     * @throws NotFoundException if the compilation is not found
-     */
     @Override
     public CompilationDto updateCompilation(Long id, UpdateCompilationRequestDto dto) {
         log.info("Updating compilation with id={}", id);
@@ -182,13 +148,6 @@ public class CompilationServiceImpl implements CompilationService {
         return compilationMapper.toCompilationDto(updatedCompilation, eventDtos);
     }
 
-    /**
-     * Helper method to find a compilation by ID, throwing NotFoundException if not found.
-     *
-     * @param compilationId the ID of the compilation
-     * @return the found Compilation
-     * @throws NotFoundException if the compilation is not found
-     */
     private Compilation findCompilationById(Long compilationId) {
         return compilationRepository.findById(compilationId)
                 .orElseThrow(() -> {

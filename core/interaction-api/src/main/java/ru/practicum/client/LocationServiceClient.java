@@ -20,7 +20,7 @@ public interface LocationServiceClient {
 
     @PostMapping("/users/{userId}/locations")
     LocationDto create(@PathVariable long userId,
-            @RequestBody LocationDto location);
+                       @RequestBody LocationDto location);
 
     @GetMapping("/internal/locations/{locationId}")
     LocationDto getById(@PathVariable long locationId);

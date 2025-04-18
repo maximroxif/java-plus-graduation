@@ -38,28 +38,28 @@ public record NewEventDto(
         @NotNull @Size(min = 3, max = 120)
         String title
 ) {
-        public NewEventDto(
-                String annotation,
-                Long category,
-                String description,
-                LocalDateTime eventDate,
-                LocationDto location,
-                Boolean paid,
-                Integer participantLimit,
-                Boolean requestModeration,
-                String title) {
+    public NewEventDto(
+            String annotation,
+            Long category,
+            String description,
+            LocalDateTime eventDate,
+            LocationDto location,
+            Boolean paid,
+            Integer participantLimit,
+            Boolean requestModeration,
+            String title) {
 
-                this.annotation = annotation;
-                this.category = category;
-                this.description = description;
-                this.eventDate = eventDate;
-                this.location = location;
-                this.paid = Objects.requireNonNullElse(paid, false);
-                this.participantLimit = Objects.requireNonNullElse(participantLimit, 0);
-                this.requestModeration = Objects.requireNonNullElse(requestModeration, true);
-                this.title = title;
+        this.annotation = annotation;
+        this.category = category;
+        this.description = description;
+        this.eventDate = eventDate;
+        this.location = location;
+        this.paid = Objects.requireNonNullElse(paid, false);
+        this.participantLimit = Objects.requireNonNullElse(participantLimit, 0);
+        this.requestModeration = Objects.requireNonNullElse(requestModeration, true);
+        this.title = title;
 
-        }
+    }
 
 
 }
